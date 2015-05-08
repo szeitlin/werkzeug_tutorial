@@ -15,17 +15,45 @@ from jinja2 import Environment, FileSystemLoader
 class Shortly(object):
 
     def __init__(self, config):
+        """
+        aka, 'the constructor'.
+
+        :param config:
+        :return:
+        """
         self.redis = redis.Redis(config['redis_host'], config['redis_port'])
+        template_path= os.path.join(os.path.dirname(__file__), 'templates')
+        self.jinja_env = Environment(loader=FileSystemLoader(template_path), autoescape=True)
+
+        self.url_map = Map([
+            Rule('/', endpoint='new_url'),
+            Rule('/<short_id>', endpoint='follow_short_link'),
+            Rule('/<short_id>+', endpoint='short_link_details')
+        ])
+
+    def render_template(self, template_name, **context):
+        t = self.jinja_env.get_template(template_name)
+        return Response(t.render(context), mimetype='text/html')
 
     def dispatch_request(self, request):
         """
         Sends the request and gets the response.
         Could return another wsgi app from here.
 
+        Binds the URL map to the current environment and gets back a URLAdapter object, which is used
+        to match the request or reverse URLs.
+
         :param request:
         :return:
         """
-        return Response('hello world!')
+        adapter = self.url_map.bind_to_environ(request.environ)
+        try:
+            endpoint, values = adapter.match()
+            return getattr(self, 'on_' + endpoint)(request, **values)
+
+        #if no match, will raise a NotFound
+        except HTTPException as e:
+            return e
 
     def wsgi_app(self, environ, start_response):
         """
@@ -68,6 +96,7 @@ def create_app(redis_host=('localhost'), redis_port=6379, with_static=True):
             '/static': os.path.join(os.path.dirname(__file__), 'static')
         })
     return app
+
 
 if __name__=='__main__':
     from werkzeug.serving import run_simple
