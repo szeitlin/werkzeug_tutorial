@@ -67,7 +67,7 @@ class Shortly(object):
 
         also increments a counter to track how often a link was clicked.
 
-        note that redis only works with strings. 
+        note that redis only works with strings.
 
         :param request:
         :param short_id:
