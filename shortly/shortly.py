@@ -30,6 +30,62 @@ class Shortly(object):
             Rule('/<short_id>', endpoint='follow_short_link'),
             Rule('/<short_id>+', endpoint='short_link_details')
         ])
+    #first view
+    def on_new_url(self, request):
+        error=None
+        url=''
+        if request.method=='POST':
+            url = request.form['url']
+            if not is_valid_url(url):
+                error = 'Please enter a real url!'
+            else:
+                short_id = self.insert_url(url)
+                return redirect('/%s+' % short_id)
+        return self.render_template('new_url.html', error=error, url=url)
+
+    def insert_url(self, url):
+        """
+        Checks to see if short_id already exists, return if yes, otherwise generate new.
+
+        :param url:
+        :return:
+        """
+        short_id = self.redis.get('reverse-url:' + url)
+        if short_id is not None:
+            return short_id
+        url_num = self.redis.incr('last-url-id')
+        short_id = base36_encode(url_num)
+        self.redis.set('url-target:' + short_id, url)
+        self.redis.set('reverse-url:' + url, short_id)
+        return short_id
+
+    def on_follow_short_link(self, request, short_id):
+        """
+        redirect view. looks for the link in redis and redirects to it,
+        otherwise raises a NotFound exception, which will be converted by
+        the dispatch_request function to a default 404 response.
+
+        also increments a counter to track how often a link was clicked.
+
+        note that redis only works with strings. 
+
+        :param request:
+        :param short_id:
+        :return:
+        """
+        link_target = self.redis.get('url-target:' + short_id)
+        if link_target is None:
+            raise NotFound()
+        self.redis.incr('click-count:' + short_id)
+        return redirect(link_target)
+
+    def on_short_link_details(self, request, short_id):
+        link_target=self.redis.get('url-target:' + short_id)
+        if link_target is None:
+            raise NotFound()
+        click_count = int(self.redis.get('click_count:' + short_id) or 0)
+        return self.render_template('short_link_details.html',
+                                    link_target=link_target, short_id=short_id, click_count=click_count)
 
     def render_template(self, template_name, **context):
         t = self.jinja_env.get_template(template_name)
@@ -97,6 +153,33 @@ def create_app(redis_host=('localhost'), redis_port=6379, with_static=True):
         })
     return app
 
+
+
+def is_valid_url(url):
+    """
+    helper for on_new_url.
+
+    :param url:
+    :return: bool
+    """
+    parts = urlparse.urlparse(url)
+    return parts.scheme in ('http', 'https')
+
+def base36_encode(number):
+    """
+    helper function for creating the short id.
+
+    :param number:
+    :return:
+    """
+    assert number >=0, 'positive integer required'
+    if number==0:
+        return '0'
+    base36=[]
+    while number !=0:
+        number, i = divmod(number,36)
+        base36.append('0123456789abcdefghijklmnopqrstuvwxyz'[i])
+    return ''.join(reversed(base36))
 
 if __name__=='__main__':
     from werkzeug.serving import run_simple
